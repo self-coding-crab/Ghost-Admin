@@ -2,8 +2,8 @@ import MemberImportError from 'ghost-admin/errors/member-import-error';
 import Service, {inject as service} from '@ember/service';
 import validator from 'validator';
 import {formatNumber} from 'ghost-admin/helpers/format-number';
+import {ghPluralize} from 'ghost-admin/helpers/gh-pluralize';
 import {isEmpty} from '@ember/utils';
-import {pluralize} from 'ember-inflector';
 
 export default Service.extend({
     ajax: service(),
@@ -34,7 +34,7 @@ export default Service.extend({
             if (!this.membersUtils.isStripeEnabled) {
                 validationErrors.push(new MemberImportError({
                     message: `Missing Stripe connection`,
-                    context: `${formatNumber(totalCount)} ${pluralize(totalCount, 'Stripe customer', {withoutCount: true})} won't be imported. You need to <a href="#/settings/labs">connect to Stripe</a> to import Stripe customers.`,
+                    context: `${ghPluralize(totalCount, 'Stripe customer')} won't be imported. You need to <a href="#/settings/labs">connect to Stripe</a> to import Stripe customers.`,
                     type: 'warning'
                 }));
             } else {
@@ -169,6 +169,11 @@ export default Service.extend({
 
                 if (!mapping.stripe_customer_id && value && value.startsWith && value.startsWith('cus_')) {
                     mapping.stripe_customer_id = key;
+                    continue;
+                }
+
+                if (!mapping.name && /name/.test(key)) {
+                    mapping.name = key;
                     continue;
                 }
 

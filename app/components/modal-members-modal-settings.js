@@ -1,6 +1,5 @@
 import $ from 'jquery';
 import ModalComponent from 'ghost-admin/components/modal-base';
-import boundOneWay from '../utils/bound-one-way';
 import copyTextToClipboard from 'ghost-admin/utils/copy-text-to-clipboard';
 import {alias, reads} from '@ember/object/computed';
 import {computed} from '@ember/object';
@@ -42,17 +41,26 @@ export default ModalComponent.extend({
     defaultButtonIcons: null,
     isShowModalLink: true,
     customIcon: null,
+    showLinksPage: false,
+    showLeaveSettingsModal: false,
     confirm() {},
 
-    signupButtonText: boundOneWay('settings.portalButtonSignupText'),
-    buttonIcon: boundOneWay('settings.portalButtonIcon'),
     allowSelfSignup: alias('settings.membersAllowFreeSignup'),
 
     isStripeConfigured: reads('membersUtils.isStripeEnabled'),
 
+    buttonIcon: computed('settings.portalButtonIcon', function () {
+        const defaultIconKeys = this.defaultButtonIcons.map(buttonIcon => buttonIcon.value);
+        return (this.settings.get('portalButtonIcon') || defaultIconKeys[0]);
+    }),
+
     backgroundStyle: computed('settings.accentColor', function () {
         let color = this.get('settings.accentColor') || '#ffffff';
         return htmlSafe(`background-color: ${color}`);
+    }),
+
+    colorPickerValue: computed('settings.accentColor', function () {
+        return this.get('settings.accentColor') || '#ffffff';
     }),
 
     accentColor: computed('settings.accentColor', function () {
@@ -70,7 +78,7 @@ export default ModalComponent.extend({
         return `data-portal`;
     }),
 
-    portalPreviewUrl: computed('selectedButtonStyle', 'buttonIcon', 'signupButtonText', 'page', 'isFreeChecked', 'isMonthlyChecked', 'isYearlyChecked', 'settings.{portalName,portalButton,accentColor}', function () {
+    portalPreviewUrl: computed('buttonIcon', 'page', 'isFreeChecked', 'isMonthlyChecked', 'isYearlyChecked', 'settings.{portalName,portalButton,portalButtonSignupText,portalButtonStyle,accentColor}', function () {
         const baseUrl = this.config.get('blogUrl');
         const portalBase = '/#/portal/preview';
         const settingsParam = new URLSearchParams();
@@ -83,12 +91,12 @@ export default ModalComponent.extend({
         if (this.buttonIcon) {
             settingsParam.append('buttonIcon', encodeURIComponent(this.buttonIcon));
         }
-        settingsParam.append('signupButtonText', encodeURIComponent(this.signupButtonText));
+        settingsParam.append('signupButtonText', encodeURIComponent(this.settings.get('portalButtonSignupText')));
         if (this.settings.get('accentColor')) {
             settingsParam.append('accentColor', encodeURIComponent(`${this.settings.get('accentColor')}`));
         }
-        if (this.selectedButtonStyle) {
-            settingsParam.append('buttonStyle', encodeURIComponent(this.selectedButtonStyle.name));
+        if (this.settings.get('portalButtonStyle')) {
+            settingsParam.append('buttonStyle', encodeURIComponent(this.settings.get('portalButtonStyle')));
         }
         return `${baseUrl}${portalBase}?${settingsParam.toString()}`;
     }),
@@ -126,6 +134,7 @@ export default ModalComponent.extend({
 
     init() {
         this._super(...arguments);
+        this.set('hidePreviewFrame', true);
         this.buttonStyleOptions = [
             {name: 'icon-and-text', label: 'Icon and text'},
             {name: 'icon-only', label: 'Icon only'},
@@ -138,6 +147,13 @@ export default ModalComponent.extend({
         if (portalButtonIcon && !defaultIconKeys.includes(portalButtonIcon)) {
             this.set('customIcon', this.settings.get('portalButtonIcon'));
         }
+    },
+
+    didInsertElement() {
+        this._super(...arguments);
+        run.later(this, function () {
+            this.set('hidePreviewFrame', false);
+        }, 1200);
     },
 
     actions: {
@@ -168,50 +184,27 @@ export default ModalComponent.extend({
         },
 
         switchPreviewPage(page) {
-            this.set('page', page);
+            if (page === 'links') {
+                this.set('showLinksPage', true);
+                this.set('page', '');
+            } else {
+                this.set('showLinksPage', false);
+                this.set('page', page);
+            }
+        },
+
+        updateAccentColor(color) {
+            this._validateAccentColor(color);
         },
 
         validateAccentColor() {
-            let newColor = this.get('accentColor');
-            let oldColor = this.get('settings.accentColor');
-            let errMessage = '';
-
-            // reset errors and validation
-            this.get('settings.errors').remove('accentColor');
-            this.get('settings.hasValidated').removeObject('accentColor');
-
-            if (newColor === '') {
-                // Clear out the accent color
-                this.set('settings.accentColor', '');
-                return;
-            }
-
-            // accentColor will be null unless the user has input something
-            if (!newColor) {
-                newColor = oldColor;
-            }
-
-            if (newColor[0] !== '#') {
-                newColor = `#${newColor}`;
-            }
-
-            if (newColor.match(/#[0-9A-Fa-f]{6}$/)) {
-                this.set('settings.accentColor', '');
-                run.schedule('afterRender', this, function () {
-                    this.set('settings.accentColor', newColor);
-                });
-            } else {
-                errMessage = 'The color should be in valid hex format';
-                this.get('settings.errors').add('accentColor', errMessage);
-                this.get('settings.hasValidated').pushObject('accentColor');
-                return;
-            }
+            this._validateAccentColor(this.get('accentColor'));
         },
         setButtonStyle(buttonStyle) {
-            this.set('selectedButtonStyle', buttonStyle);
+            this.settings.set('portalButtonStyle', buttonStyle.name);
         },
         setSignupButtonText(event) {
-            this.set('signupButtonText', event.target.value);
+            this.settings.set('portalButtonSignupText', event.target.value);
         },
         /**
          * Fired after an image upload completes
@@ -222,7 +215,7 @@ export default ModalComponent.extend({
         imageUploaded(property, results) {
             if (results[0]) {
                 this.set('customIcon', results[0].url);
-                this.set('buttonIcon', results[0].url);
+                this.settings.set('portalButtonIcon', results[0].url);
             }
         },
         /**
@@ -240,8 +233,22 @@ export default ModalComponent.extend({
                 .click();
         },
 
+        deleteCustomIcon() {
+            this.set('customIcon', null);
+            const defaultIconKeys = ICON_MAPPING.map(buttonIcon => buttonIcon.value);
+            this.settings.set('portalButtonIcon', defaultIconKeys[0]);
+        },
+
         selectDefaultIcon(icon) {
-            this.set('buttonIcon', icon);
+            this.settings.set('portalButtonIcon', icon);
+        },
+
+        closeLeaveSettingsModal() {
+            this.set('showLeaveSettingsModal', false);
+        },
+
+        leaveSettings() {
+            this.closeModal();
         }
     },
 
@@ -256,15 +263,50 @@ export default ModalComponent.extend({
         }
     },
 
+    _validateAccentColor(color) {
+        let newColor = color;
+        let oldColor = this.get('settings.accentColor');
+        let errMessage = '';
+
+        // reset errors and validation
+        this.get('settings.errors').remove('accentColor');
+        this.get('settings.hasValidated').removeObject('accentColor');
+
+        if (newColor === '') {
+            // Clear out the accent color
+            this.set('settings.accentColor', '');
+            return;
+        }
+
+        // accentColor will be null unless the user has input something
+        if (!newColor) {
+            newColor = oldColor;
+        }
+
+        if (newColor[0] !== '#') {
+            newColor = `#${newColor}`;
+        }
+
+        if (newColor.match(/#[0-9A-Fa-f]{6}$/)) {
+            this.set('settings.accentColor', '');
+            run.schedule('afterRender', this, function () {
+                this.set('settings.accentColor', newColor);
+                this.set('accentColor', newColor.slice(1));
+            });
+        } else {
+            errMessage = 'The color should be in valid hex format';
+            this.get('settings.errors').add('accentColor', errMessage);
+            this.get('settings.hasValidated').pushObject('accentColor');
+            return;
+        }
+    },
+
     copyLinkOrAttribute: task(function* () {
         copyTextToClipboard(this.showModalLinkOrAttribute);
         yield timeout(this.isTesting ? 50 : 3000);
     }),
 
     saveTask: task(function* () {
-        this.settings.set('portalButtonStyle', this.selectedButtonStyle.name);
-        this.settings.set('portalButtonSignupText', this.signupButtonText);
-        this.settings.set('portalButtonIcon', this.buttonIcon);
         yield this.settings.save();
         this.closeModal();
     }).drop()
